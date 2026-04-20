@@ -3,8 +3,20 @@ package termyx
 import "strings"
 
 // Render traverses the node tree and draws each node into buf.
-// Custom nodes with a Render func are called first; children are always rendered after.
+//
+// If a node has a non-nil Props.Memo and a stable ID, its rendered output is
+// cached. On a cache hit (same Memo value and same LayoutResult), the cached
+// cell snapshot is blitted back and the entire subtree is skipped. This lets
+// expensive custom nodes opt in to memoized rendering without manual diffing.
 func Render(node *Node, buf *Buffer) {
+	// Cache check — only for nodes with a stable ID and a Memo value.
+	if node.ID != "" && node.Props.Memo != nil {
+		if cells := cacheGet(node.ID, node.Props.Memo, node.Layout); cells != nil {
+			blitCells(buf, node.Layout, cells)
+			return // subtree is baked into the snapshot
+		}
+	}
+
 	if node.Render != nil {
 		node.Render(buf, node.Layout)
 	} else {
@@ -12,6 +24,11 @@ func Render(node *Node, buf *Buffer) {
 	}
 	for _, child := range node.Children {
 		Render(child, buf)
+	}
+
+	// Store result after rendering this subtree.
+	if node.ID != "" && node.Props.Memo != nil {
+		cachePut(node.ID, node.Props.Memo, node.Layout, buf)
 	}
 }
 
@@ -46,7 +63,7 @@ func renderText(node *Node, buf *Buffer) {
 	}
 }
 
-// wrapLines splits text at newlines and wraps long lines to width.
+// wrapLines splits text at newlines and wraps long lines to width display columns.
 func wrapLines(text string, width int) []string {
 	if width <= 0 {
 		return nil

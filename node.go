@@ -93,6 +93,14 @@ type Props struct {
 	Focusable bool
 	OnKey     func(KeyEvent)
 	OnMouse   func(MouseEvent)
+
+	// Memo opts this node's subtree into render caching. When non-nil, the
+	// full rendered output of this node and all its descendants is cached by
+	// (node.ID, Memo, Layout). On a cache hit (same Memo and same layout), the
+	// subtree is skipped entirely and its previous cells are blitted back.
+	// Use comparable values (string, int, struct) for best performance; non-
+	// comparable types (slices, maps) always miss the cache.
+	Memo any
 }
 
 // LayoutResult holds the computed position and size of a node after layout.

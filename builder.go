@@ -135,3 +135,14 @@ func FixedHeight(n *Node, height int) *Node {
 	n.Props.Height = height
 	return n
 }
+// WithMemo opts a node's subtree into render caching. key should be a
+// comparable value (string, int, struct) that encodes all inputs the node
+// needs to render. When key is identical to the previous frame's key AND the
+// node's layout is unchanged, the cached cell snapshot is reused and the
+// entire subtree is skipped.
+//
+//	termyx.WithMemo(logPane, logVersion)
+func WithMemo(n *Node, key any) *Node {
+	n.Props.Memo = key
+	return n
+}
