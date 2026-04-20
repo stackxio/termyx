@@ -1,6 +1,11 @@
 package termyx
 
-import "fmt"
+import (
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+)
 
 // App defines the Termyx application.
 type App struct {
@@ -35,6 +40,51 @@ type App struct {
 	// Nil (default) uses the built-in ANSI painter.
 	// Set to NewVaxisBackend() to use the Vaxis library.
 	Backend Backend
+}
+
+// ExecProcess suspends the Termyx runtime, runs cmd with the terminal
+// connected to stdin/stdout/stderr, then restores the TUI. Use this for
+// interactive commands like `kubectl exec -it`.
+//
+// Only works with ANSIBackend (the default). Returns the command's error.
+// Typical usage in an OnKey handler:
+//
+//	termyx.ExecProcess(exec.Command("kubectl", "exec", "-it", pod, "--", "/bin/sh"))
+//
+// Because Run is blocking, wire this via App.Update: run the command in a
+// goroutine, send on updateCh when done, and redraw.
+func ExecProcess(be Backend, cmd *exec.Cmd) error {
+	ab, ok := be.(*ANSIBackend)
+	if !ok {
+		return fmt.Errorf("termyx: ExecProcess requires ANSIBackend")
+	}
+	ab.Suspend()
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	if resumeErr := ab.Resume(); resumeErr != nil && err == nil {
+		err = resumeErr
+	}
+	return err
+}
+
+// ExecProcessPiped runs cmd with piped stdout/stderr for capturing output,
+// suspending the TUI first. Useful for `kubectl describe` / `kubectl logs`.
+func ExecProcessPiped(be Backend, cmd *exec.Cmd, stdout, stderr io.Writer) error {
+	ab, ok := be.(*ANSIBackend)
+	if !ok {
+		return fmt.Errorf("termyx: ExecProcessPiped requires ANSIBackend")
+	}
+	ab.Suspend()
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	err := cmd.Run()
+	if resumeErr := ab.Resume(); resumeErr != nil && err == nil {
+		err = resumeErr
+	}
+	return err
 }
 
 // Run starts the Termyx event loop, blocking until the app exits.

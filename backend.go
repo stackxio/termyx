@@ -60,6 +60,8 @@ func (b *ANSIBackend) Init() error {
 		return fmt.Errorf("termyx: raw mode: %w", err)
 	}
 	b.state = state
+	// Enter alternate screen so terminal contents are preserved on exit.
+	fmt.Fprint(os.Stdout, "\x1b[?1049h\x1b[2J\x1b[H")
 	b.painter = NewPainter(os.Stdout)
 
 	// SIGWINCH → resize events.
@@ -98,7 +100,35 @@ func (b *ANSIBackend) Restore() {
 	if b.state != nil {
 		term.Restore(b.stdinFD, b.state)
 	}
-	fmt.Print("\x1b[?25h\x1b[0m") // restore cursor + reset attributes
+	// Exit alternate screen, restore cursor and attributes.
+	fmt.Print("\x1b[?25h\x1b[0m\x1b[?1049l")
+}
+
+// Suspend temporarily restores the terminal (for running external commands).
+// Call Resume when done.
+func (b *ANSIBackend) Suspend() {
+	if b.mouse {
+		fmt.Fprint(os.Stdout, mouseTrackingOff())
+	}
+	fmt.Print("\x1b[?25h\x1b[0m\x1b[?1049l")
+	if b.state != nil {
+		term.Restore(b.stdinFD, b.state)
+	}
+}
+
+// Resume re-enters raw mode and alt screen after a Suspend.
+func (b *ANSIBackend) Resume() error {
+	state, err := term.MakeRaw(b.stdinFD)
+	if err != nil {
+		return err
+	}
+	b.state = state
+	fmt.Fprint(os.Stdout, "\x1b[?1049h\x1b[2J\x1b[H")
+	if b.mouse {
+		fmt.Fprint(os.Stdout, mouseTrackingOn())
+	}
+	b.painter.Invalidate()
+	return nil
 }
 
 func (b *ANSIBackend) Size() (int, int) {
