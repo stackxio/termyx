@@ -3,23 +3,44 @@ package termyx
 // ComputeLayout runs a recursive layout pass, assigning X, Y, Width, Height
 // to every node in the tree given the available space.
 func ComputeLayout(node *Node, x, y, width, height int) {
+	// Apply MinWidth / MinHeight constraints.
+	if node.Props.MinWidth > 0 && width < node.Props.MinWidth {
+		width = node.Props.MinWidth
+	}
+	if node.Props.MinHeight > 0 && height < node.Props.MinHeight {
+		height = node.Props.MinHeight
+	}
+
 	node.Layout = LayoutResult{X: x, Y: y, Width: width, Height: height}
 
 	if len(node.Children) == 0 {
 		return
 	}
 
+	// Shrink available space by padding before laying out children.
+	p := node.Props
+	innerX := x + p.PaddingLeft
+	innerY := y + p.PaddingTop
+	innerW := width - p.PaddingLeft - p.PaddingRight
+	innerH := height - p.PaddingTop - p.PaddingBottom
+	if innerW < 0 {
+		innerW = 0
+	}
+	if innerH < 0 {
+		innerH = 0
+	}
+
 	switch node.Props.Direction {
 	case DirectionRow:
-		layoutChildren(node.Children, x, y, width, height, true)
+		layoutChildren(node.Children, innerX, innerY, innerW, innerH, true, node.Props.AlignItems)
 	case DirectionColumn:
-		layoutChildren(node.Children, x, y, width, height, false)
+		layoutChildren(node.Children, innerX, innerY, innerW, innerH, false, node.Props.AlignItems)
 	}
 }
 
 // layoutChildren distributes space among children along the main axis.
 // horizontal=true means a Row (distribute width), false means a Column (distribute height).
-func layoutChildren(children []*Node, x, y, width, height int, horizontal bool) {
+func layoutChildren(children []*Node, x, y, width, height int, horizontal bool, align Align) {
 	fixedTotal, totalGrow := measureChildren(children, horizontal)
 
 	available := mainAxis(width, height, horizontal) - fixedTotal
@@ -31,16 +52,45 @@ func layoutChildren(children []*Node, x, y, width, height int, horizontal bool) 
 
 	for i, child := range children {
 		main := childMain(child, available, totalGrow, horizontal, i == len(children)-1, cursor, x, y, width, height)
-		cross := crossAxis(child, width, height, horizontal)
-
-		if horizontal {
-			ComputeLayout(child, cursor, y, main, cross)
-		} else {
-			ComputeLayout(child, x, cursor, cross, main)
-		}
-
+		childX, childY, childW, childH := crossLayout(child, x, y, width, height, cursor, main, horizontal, align)
+		ComputeLayout(child, childX, childY, childW, childH)
 		cursor += main
 	}
+}
+
+// crossLayout computes the position and size of a child on both axes.
+func crossLayout(child *Node, x, y, width, height, cursor, main int, horizontal bool, align Align) (cx, cy, cw, ch int) {
+	cross := mainAxis(height, width, horizontal) // cross-axis total
+
+	var childCross int
+	switch align {
+	case AlignStretch:
+		childCross = cross
+	default:
+		if horizontal && child.Props.Height > 0 {
+			childCross = child.Props.Height
+		} else if !horizontal && child.Props.Width > 0 {
+			childCross = child.Props.Width
+		} else {
+			childCross = cross
+		}
+	}
+
+	crossOffset := 0
+	switch align {
+	case AlignCenter:
+		crossOffset = (cross - childCross) / 2
+	case AlignEnd:
+		crossOffset = cross - childCross
+	}
+	if crossOffset < 0 {
+		crossOffset = 0
+	}
+
+	if horizontal {
+		return cursor, y + crossOffset, main, childCross
+	}
+	return x + crossOffset, cursor, childCross, main
 }
 
 func mainAxis(w, h int, horizontal bool) int {
@@ -48,19 +98,6 @@ func mainAxis(w, h int, horizontal bool) int {
 		return w
 	}
 	return h
-}
-
-func crossAxis(child *Node, width, height int, horizontal bool) int {
-	if horizontal {
-		if child.Props.Height > 0 {
-			return child.Props.Height
-		}
-		return height
-	}
-	if child.Props.Width > 0 {
-		return child.Props.Width
-	}
-	return width
 }
 
 func childMain(child *Node, available int, totalGrow float64, horizontal bool, isLast bool, cursor, originX, originY, width, height int) int {
