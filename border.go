@@ -1,4 +1,4 @@
-package ui
+package termyx
 
 // Border wraps child in a box-drawing border with an optional title.
 // The child is laid out inside the 1-cell inset and rendered by the tree traversal.

@@ -1,4 +1,4 @@
-module github.com/voxire/termyx
+module github.com/stackxio/termyx
 
 go 1.26.1
 

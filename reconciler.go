@@ -1,4 +1,4 @@
-package ui
+package termyx
 
 // Reconcile merges next onto prev, carrying stable identity (ID) from matched
 // nodes so that future state fields survive across frames.

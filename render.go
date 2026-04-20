@@ -1,4 +1,4 @@
-package ui
+package termyx
 
 import "strings"
 
