@@ -1,13 +1,6 @@
 package termyx
 
-import (
-	"fmt"
-	"os"
-	"os/signal"
-	"syscall"
-
-	"golang.org/x/term"
-)
+import "fmt"
 
 // App defines the Termyx application.
 type App struct {
@@ -25,9 +18,9 @@ type App struct {
 	// that has an OnMouse handler; unhandled events bubble here.
 	OnMouse func(MouseEvent) bool
 
-	// EnableMouse activates terminal mouse reporting (SGR protocol).
+	// EnableMouse activates terminal mouse reporting.
 	// When true, click, scroll, and motion events are delivered via OnMouse
-	// and per-node Clickable handlers. Defaults to false.
+	// and per-node Clickable handlers.
 	EnableMouse bool
 
 	// Update is an optional channel that signals a re-render.
@@ -37,53 +30,31 @@ type App struct {
 	// InitialFocus is the key of the node that receives focus on startup.
 	// Leave empty to start with no focused node.
 	InitialFocus string
+
+	// Backend selects the terminal I/O layer.
+	// Nil (default) uses the built-in ANSI painter.
+	// Set to NewVaxisBackend() to use the Vaxis library.
+	Backend Backend
 }
 
 // Run starts the Termyx event loop, blocking until the app exits.
-// It puts the terminal in raw mode, handles SIGWINCH, and routes
-// keyboard events through the focus system and App.OnKey.
 func Run(app *App) error {
-	stdinFD := int(os.Stdin.Fd())
-
-	state, err := term.MakeRaw(stdinFD)
-	if err != nil {
-		return fmt.Errorf("termyx: raw mode: %w", err)
-	}
-	defer func() {
-		term.Restore(stdinFD, state)
-		fmt.Print("\x1b[?25h\x1b[0m") // restore cursor + reset attributes
-	}()
-
-	width, height, err := term.GetSize(int(os.Stdout.Fd()))
-	if err != nil {
-		width, height = 80, 24
+	be := app.Backend
+	if be == nil {
+		be = NewANSIBackend()
 	}
 
-	painter := NewPainter(os.Stdout)
+	if err := be.Init(); err != nil {
+		return fmt.Errorf("termyx: backend init: %w", err)
+	}
+	defer be.Restore()
 
 	if app.EnableMouse {
-		fmt.Fprint(os.Stdout, mouseTrackingOn())
-		defer fmt.Fprint(os.Stdout, mouseTrackingOff())
+		be.EnableMouse(true)
 	}
 
-	sigwinch := make(chan os.Signal, 1)
-	signal.Notify(sigwinch, syscall.SIGWINCH)
-	defer signal.Stop(sigwinch)
-
-	type inputMsg struct {
-		key   *KeyEvent
-		mouse *MouseEvent
-	}
-	inputc := make(chan inputMsg, 8)
-	go func() {
-		for {
-			ev, err := ReadInput()
-			if err != nil {
-				return
-			}
-			inputc <- inputMsg{key: ev.Key, mouse: ev.Mouse}
-		}
-	}()
+	width, height := be.Size()
+	painter := &painterAdapter{be: be}
 
 	var (
 		prevTree   *Node
@@ -118,11 +89,9 @@ func Run(app *App) error {
 		next := app.Root()
 		next = Reconcile(prevTree, next)
 
-		// Collect focusable nodes and apply focus state before rendering.
 		focusOrder = focusOrder[:0]
 		collectFocusOrder(next, &focusOrder)
 
-		// Auto-focus first node if InitialFocus was set as a key
 		if focusedID == "" && len(focusOrder) > 0 && app.InitialFocus == "first" {
 			focusedID = focusOrder[0]
 		}
@@ -143,68 +112,86 @@ func Run(app *App) error {
 		update = make(chan struct{}) // never fires
 	}
 
+	inputC := be.InputCh()
+
 	for {
 		select {
-		case <-sigwinch:
-			width, height, _ = term.GetSize(int(os.Stdout.Fd()))
-			painter.Invalidate()
-			frame()
+		case ev := <-inputC:
+			if ev.Resize != nil {
+				width = ev.Resize.Width
+				height = ev.Resize.Height
+				painter.Invalidate()
+				frame()
+				continue
+			}
 
-		case msg := <-inputc:
-			if msg.mouse != nil {
-				ev := *msg.mouse
-				// Dispatch to deepest node with an OnMouse handler.
+			if ev.Mouse != nil {
+				mouse := *ev.Mouse
 				handled := false
 				if prevTree != nil {
-					if hit := hitTest(prevTree, ev.X, ev.Y); hit != nil && hit.Props.OnMouse != nil {
-						hit.Props.OnMouse(ev)
+					if hit := hitTest(prevTree, mouse.X, mouse.Y); hit != nil && hit.Props.OnMouse != nil {
+						hit.Props.OnMouse(mouse)
 						handled = true
 					}
 				}
-				if !handled && app.OnMouse != nil && app.OnMouse(ev) {
+				if !handled && app.OnMouse != nil && app.OnMouse(mouse) {
 					return nil
 				}
 				frame()
 				continue
 			}
 
-			ev := *msg.key
-			// Tab / Shift+Tab cycle focus.
-			if ev.Key == KeyTab {
-				cycleFocus(true)
-				frame()
-				continue
-			}
-			if ev.Key == KeyShiftTab {
-				cycleFocus(false)
-				frame()
-				continue
-			}
-
-			// Route to the focused node's OnKey handler first.
-			routed := false
-			if focusedID != "" && prevTree != nil {
-				if node := findNode(prevTree, focusedID); node != nil && node.Props.OnKey != nil {
-					node.Props.OnKey(ev)
-					routed = true
+			if ev.Key != nil {
+				key := *ev.Key
+				if key.Key == KeyTab {
+					cycleFocus(true)
+					frame()
+					continue
 				}
-			}
+				if key.Key == KeyShiftTab {
+					cycleFocus(false)
+					frame()
+					continue
+				}
 
-			// Fall through to app-level handler for unrouted or unfocused events.
-			if !routed && app.OnKey != nil && app.OnKey(ev) {
-				return nil
-			}
-			if routed && app.OnKey != nil {
-				// Also give app a chance to handle quit (ctrl+c) even when focused.
-				if app.OnKey(ev) {
+				routed := false
+				if focusedID != "" && prevTree != nil {
+					if node := findNode(prevTree, focusedID); node != nil && node.Props.OnKey != nil {
+						node.Props.OnKey(key)
+						routed = true
+					}
+				}
+
+				if !routed && app.OnKey != nil && app.OnKey(key) {
 					return nil
 				}
+				if routed && app.OnKey != nil {
+					if app.OnKey(key) {
+						return nil
+					}
+				}
+				frame()
 			}
-
-			frame()
 
 		case <-update:
 			frame()
 		}
+	}
+}
+
+// painterAdapter wraps a Backend to look like the old Painter interface.
+type painterAdapter struct {
+	be      Backend
+	invalid bool
+}
+
+func (p *painterAdapter) Paint(buf *Buffer) {
+	p.be.Paint(buf)
+}
+
+func (p *painterAdapter) Invalidate() {
+	// ANSIBackend's Invalidate is implicit via resize.
+	if ab, ok := p.be.(*ANSIBackend); ok {
+		ab.painter.Invalidate()
 	}
 }
