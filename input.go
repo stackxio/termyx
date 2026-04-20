@@ -45,10 +45,11 @@ type KeyEvent struct {
 	Raw  []byte
 }
 
-// InputEvent wraps either a keyboard or mouse event from stdin.
+// InputEvent wraps a keyboard event, mouse event, or terminal resize.
 type InputEvent struct {
-	Key   *KeyEvent
-	Mouse *MouseEvent
+	Key    *KeyEvent
+	Mouse  *MouseEvent
+	Resize *ResizeEvent // non-nil when the terminal was resized
 }
 
 // ReadInput reads one keyboard or mouse event from stdin (blocking).
