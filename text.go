@@ -2,76 +2,100 @@ package termyx
 
 import (
 	"strings"
-	"unicode/utf8"
+
+	"github.com/mattn/go-runewidth"
 )
 
-// Truncate shortens s to at most width runes. If truncated, the last rune
-// is replaced with "…" (ellipsis). Returns s unchanged if it fits.
+// RuneWidth returns the display width of s in terminal columns.
+// Narrow (ASCII) characters count as 1; wide (CJK, emoji) count as 2.
+func RuneWidth(s string) int {
+	return runewidth.StringWidth(s)
+}
+
+// Truncate shortens s to fit within width display columns. If truncated,
+// the last visible column is replaced with "…". Returns s unchanged if it fits.
 func Truncate(s string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	runes := []rune(s)
-	if len(runes) <= width {
+	if runewidth.StringWidth(s) <= width {
 		return s
 	}
 	if width == 1 {
 		return "…"
 	}
-	return string(runes[:width-1]) + "…"
+	// Build up to width-1 columns, then append "…".
+	target := width - 1 // runewidth of "…" is 1
+	var b strings.Builder
+	used := 0
+	for _, r := range s {
+		w := runewidth.RuneWidth(r)
+		if used+w > target {
+			break
+		}
+		b.WriteRune(r)
+		used += w
+	}
+	b.WriteRune('…')
+	return b.String()
 }
 
-// TruncateHard shortens s to exactly width runes with no ellipsis.
+// TruncateHard shortens s to fit within width display columns with no ellipsis.
+// A wide rune that would overflow the boundary is dropped entirely (leaving a
+// trailing space is the caller's responsibility if alignment matters).
 func TruncateHard(s string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	runes := []rune(s)
-	if len(runes) <= width {
+	if runewidth.StringWidth(s) <= width {
 		return s
 	}
-	return string(runes[:width])
+	var b strings.Builder
+	used := 0
+	for _, r := range s {
+		w := runewidth.RuneWidth(r)
+		if used+w > width {
+			break
+		}
+		b.WriteRune(r)
+		used += w
+	}
+	return b.String()
 }
 
-// PadRight pads s with spaces on the right to exactly width runes.
-// If s is longer than width, it is truncated (hard, no ellipsis).
+// PadRight pads s with spaces on the right to exactly width display columns.
+// If s is wider than width it is hard-truncated.
 func PadRight(s string, width int) string {
-	runes := []rune(s)
-	if len(runes) >= width {
-		if len(runes) > width {
-			return string(runes[:width])
-		}
-		return s
+	sw := runewidth.StringWidth(s)
+	if sw > width {
+		return TruncateHard(s, width)
 	}
-	return s + strings.Repeat(" ", width-len(runes))
+	return s + strings.Repeat(" ", width-sw)
 }
 
-// PadLeft pads s with spaces on the left to exactly width runes.
+// PadLeft pads s with spaces on the left to exactly width display columns.
 func PadLeft(s string, width int) string {
-	runes := []rune(s)
-	if len(runes) >= width {
-		if len(runes) > width {
-			return string(runes[:width])
-		}
-		return s
+	sw := runewidth.StringWidth(s)
+	if sw > width {
+		return TruncateHard(s, width)
 	}
-	return strings.Repeat(" ", width-len(runes)) + s
+	return strings.Repeat(" ", width-sw) + s
 }
 
-// Center centers s within width columns, padding with spaces on both sides.
+// Center centers s within width display columns, padding with spaces on both sides.
 func Center(s string, width int) string {
-	runes := []rune(s)
-	if len(runes) >= width {
-		return string(runes[:width])
+	sw := runewidth.StringWidth(s)
+	if sw >= width {
+		return TruncateHard(s, width)
 	}
-	pad := width - len(runes)
+	pad := width - sw
 	left := pad / 2
 	right := pad - left
 	return strings.Repeat(" ", left) + s + strings.Repeat(" ", right)
 }
 
-// WordWrap wraps text to at most width runes per line, breaking at word
-// boundaries where possible. Existing newlines are preserved.
+// WordWrap wraps text to at most width display columns per line, breaking at
+// word boundaries where possible. Existing newlines are preserved.
 func WordWrap(text string, width int) []string {
 	if width <= 0 {
 		return nil
@@ -84,7 +108,7 @@ func WordWrap(text string, width int) []string {
 }
 
 func wrapLine(line string, width int) []string {
-	if utf8.RuneCountInString(line) <= width {
+	if runewidth.StringWidth(line) <= width {
 		return []string{line}
 	}
 	words := strings.Fields(line)
@@ -94,35 +118,57 @@ func wrapLine(line string, width int) []string {
 
 	var lines []string
 	current := ""
+	currentW := 0
 	for _, word := range words {
-		wordRunes := []rune(word)
+		ww := runewidth.StringWidth(word)
 		// Word itself too long — hard break it.
-		for len(wordRunes) > width {
-			if current != "" {
+		for ww > width {
+			remaining := width - currentW
+			if currentW > 0 && remaining < ww {
 				lines = append(lines, current)
 				current = ""
+				currentW = 0
+				remaining = width
 			}
-			lines = append(lines, string(wordRunes[:width]))
-			wordRunes = wordRunes[width:]
+			// Take as many display columns from word as fit.
+			chunk, rest := splitDisplayWidth(word, remaining)
+			lines = append(lines, chunk)
+			word = rest
+			ww = runewidth.StringWidth(word)
+			current = ""
+			currentW = 0
 		}
-		w := string(wordRunes)
-		if current == "" {
-			current = w
-		} else if utf8.RuneCountInString(current)+1+utf8.RuneCountInString(w) <= width {
-			current += " " + w
+		if ww == 0 {
+			continue
+		}
+		if currentW == 0 {
+			current = word
+			currentW = ww
+		} else if currentW+1+ww <= width {
+			current += " " + word
+			currentW += 1 + ww
 		} else {
 			lines = append(lines, current)
-			current = w
+			current = word
+			currentW = ww
 		}
 	}
-	if current != "" {
+	if currentW > 0 {
 		lines = append(lines, current)
 	}
 	return lines
 }
 
-// RuneWidth returns the display width of s in terminal columns.
-// For now this is equivalent to rune count; wide-char support can be added later.
-func RuneWidth(s string) int {
-	return utf8.RuneCountInString(s)
+// splitDisplayWidth splits s at exactly cols display columns.
+// Returns the prefix that fits and the remainder.
+func splitDisplayWidth(s string, cols int) (string, string) {
+	used := 0
+	for i, r := range s {
+		w := runewidth.RuneWidth(r)
+		if used+w > cols {
+			return s[:i], s[i:]
+		}
+		used += w
+	}
+	return s, ""
 }

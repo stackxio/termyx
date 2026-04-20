@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/mattn/go-runewidth"
 )
 
 // Painter writes ANSI escape sequences to a terminal, diffing against the
@@ -53,12 +55,20 @@ func fullPaint(sb *strings.Builder, buf *Buffer) {
 		moveTo(sb, y+1, 1)
 		for x := 0; x < buf.Width; x++ {
 			cell := buf.Cells[y][x]
+			if cell.Wide {
+				// Right half of a wide char — terminal already advanced past it.
+				continue
+			}
 			if !styled || cell.Style != last {
 				applyStyle(sb, cell.Style)
 				last = cell.Style
 				styled = true
 			}
-			sb.WriteRune(cell.Rune)
+			if cell.Rune == 0 {
+				sb.WriteRune(' ')
+			} else {
+				sb.WriteRune(cell.Rune)
+			}
 		}
 	}
 
@@ -70,15 +80,27 @@ func diffPaint(sb *strings.Builder, prev, curr *Buffer) {
 	var last Style
 	styled := false
 	lastX, lastY := -2, -2
+	lastW := 1 // display width of the last written rune
 
 	for y := 0; y < curr.Height; y++ {
 		for x := 0; x < curr.Width; x++ {
 			cur := curr.Cells[y][x]
-			if cur == prev.Cells[y][x] {
+			prv := prev.Cells[y][x]
+
+			if cur.Wide {
+				// Right half of a wide char. Skip — but if it changed (e.g.,
+				// was a regular char before), the terminal position is already
+				// correct because we wrote the wide rune at x-1.
 				continue
 			}
 
-			if !(y == lastY && x == lastX+1) {
+			if cur == prv {
+				continue
+			}
+
+			// Check if cursor is already in position.
+			expectedX := lastX + lastW
+			if !(y == lastY && x == expectedX) {
 				moveTo(sb, y+1, x+1)
 			}
 
@@ -88,8 +110,16 @@ func diffPaint(sb *strings.Builder, prev, curr *Buffer) {
 				styled = true
 			}
 
-			sb.WriteRune(cur.Rune)
+			r := cur.Rune
+			if r == 0 {
+				r = ' '
+			}
+			sb.WriteRune(r)
 			lastX, lastY = x, y
+			lastW = runewidth.RuneWidth(r)
+			if lastW < 1 {
+				lastW = 1
+			}
 		}
 	}
 
