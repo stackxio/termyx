@@ -78,6 +78,20 @@ func Overlay(base, modal *Node, visible bool, opts OverlayOpts) *Node {
 	return n
 }
 
+// OverlayFull renders a full-viewport dimmed backdrop and centers modal on top.
+// This is the equivalent of lipgloss.Place — it fills the entire terminal with
+// bgStyle, then draws the modal centered within it.
+//
+//	termyx.OverlayFull(base, helpPanel, showHelp, bgStyle,
+//	    termyx.OverlayOpts{Width: 60, Height: 20})
+func OverlayFull(base, modal *Node, visible bool, bgStyle Style, opts OverlayOpts) *Node {
+	if !visible {
+		return base
+	}
+	backdropped := Backdrop(bgStyle, modal)
+	return Overlay(base, backdropped, true, opts)
+}
+
 // Backdrop fills a region with a semi-transparent overlay color before the modal.
 // Use it as the background of a modal to visually separate it from the base layer.
 func Backdrop(style Style, child *Node) *Node {
