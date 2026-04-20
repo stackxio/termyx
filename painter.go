@@ -107,6 +107,18 @@ func applyStyle(sb *strings.Builder, s Style) {
 	if s.Bold {
 		sb.WriteString("\x1b[1m")
 	}
+	if s.Italic {
+		sb.WriteString("\x1b[3m")
+	}
+	if s.Underline {
+		sb.WriteString("\x1b[4m")
+	}
+	if s.Reverse {
+		sb.WriteString("\x1b[7m")
+	}
+	if s.Strikethrough {
+		sb.WriteString("\x1b[9m")
+	}
 	if s.FG.Set {
 		fmt.Fprintf(sb, "\x1b[38;2;%d;%d;%dm", s.FG.R, s.FG.G, s.FG.B)
 	}

@@ -83,3 +83,55 @@ func WithStyle(n *Node, style Style) *Node {
 	n.Props.Style = style
 	return n
 }
+
+// Pad sets uniform padding on all four sides and returns n.
+func Pad(n *Node, all int) *Node {
+	n.Props.PaddingTop = all
+	n.Props.PaddingRight = all
+	n.Props.PaddingBottom = all
+	n.Props.PaddingLeft = all
+	return n
+}
+
+// PadXY sets horizontal (x) and vertical (y) padding and returns n.
+func PadXY(n *Node, x, y int) *Node {
+	n.Props.PaddingTop = y
+	n.Props.PaddingBottom = y
+	n.Props.PaddingLeft = x
+	n.Props.PaddingRight = x
+	return n
+}
+
+// PadSides sets each padding side individually and returns n.
+func PadSides(n *Node, top, right, bottom, left int) *Node {
+	n.Props.PaddingTop = top
+	n.Props.PaddingRight = right
+	n.Props.PaddingBottom = bottom
+	n.Props.PaddingLeft = left
+	return n
+}
+
+// MinSize sets minimum width and height constraints on n and returns n.
+func MinSize(n *Node, minW, minH int) *Node {
+	n.Props.MinWidth = minW
+	n.Props.MinHeight = minH
+	return n
+}
+
+// WithAlign sets the cross-axis alignment for a container's children and returns n.
+func WithAlign(n *Node, a Align) *Node {
+	n.Props.AlignItems = a
+	return n
+}
+
+// FixedWidth sets only the width (height remains flex) and returns n.
+func FixedWidth(n *Node, width int) *Node {
+	n.Props.Width = width
+	return n
+}
+
+// FixedHeight sets only the height (width remains flex) and returns n.
+func FixedHeight(n *Node, height int) *Node {
+	n.Props.Height = height
+	return n
+}
