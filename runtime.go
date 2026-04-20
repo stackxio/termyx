@@ -15,16 +15,22 @@ type App struct {
 	Root func() *Node
 
 	// OnKey handles keyboard input. Return true to exit the runtime.
+	// Keyboard events are first dispatched to the focused node's OnKey handler;
+	// unhandled events (where the node's OnKey returns false) fall through here.
 	OnKey func(KeyEvent) bool
 
 	// Update is an optional channel that signals a re-render.
 	// Useful for triggering redraws from background goroutines.
 	Update <-chan struct{}
+
+	// InitialFocus is the key of the node that receives focus on startup.
+	// Leave empty to start with no focused node.
+	InitialFocus string
 }
 
 // Run starts the Termyx event loop, blocking until the app exits.
 // It puts the terminal in raw mode, handles SIGWINCH, and routes
-// keyboard events through App.OnKey.
+// keyboard events through the focus system and App.OnKey.
 func Run(app *App) error {
 	stdinFD := int(os.Stdin.Fd())
 
@@ -59,11 +65,50 @@ func Run(app *App) error {
 		}
 	}()
 
-	var prevTree *Node
+	var (
+		prevTree   *Node
+		focusedID  string
+		focusOrder []string
+	)
+
+	if app.InitialFocus != "" {
+		focusedID = app.InitialFocus
+	}
+
+	cycleFocus := func(forward bool) {
+		if len(focusOrder) == 0 {
+			return
+		}
+		idx := -1
+		for i, id := range focusOrder {
+			if id == focusedID {
+				idx = i
+				break
+			}
+		}
+		if forward {
+			idx = (idx + 1) % len(focusOrder)
+		} else {
+			idx = (idx - 1 + len(focusOrder)) % len(focusOrder)
+		}
+		focusedID = focusOrder[idx]
+	}
 
 	frame := func() {
 		next := app.Root()
 		next = Reconcile(prevTree, next)
+
+		// Collect focusable nodes and apply focus state before rendering.
+		focusOrder = focusOrder[:0]
+		collectFocusOrder(next, &focusOrder)
+
+		// Auto-focus first node if InitialFocus was set as a key
+		if focusedID == "" && len(focusOrder) > 0 && app.InitialFocus == "first" {
+			focusedID = focusOrder[0]
+		}
+
+		applyFocus(next, focusedID)
+
 		ComputeLayout(next, 0, 0, width, height)
 		buf := NewBuffer(width, height)
 		Render(next, buf)
@@ -86,9 +131,38 @@ func Run(app *App) error {
 			frame()
 
 		case ev := <-keyc:
-			if app.OnKey != nil && app.OnKey(ev) {
+			// Tab / Shift+Tab cycle focus.
+			if ev.Key == KeyTab {
+				cycleFocus(true)
+				frame()
+				continue
+			}
+			if ev.Key == KeyShiftTab {
+				cycleFocus(false)
+				frame()
+				continue
+			}
+
+			// Route to the focused node's OnKey handler first.
+			routed := false
+			if focusedID != "" && prevTree != nil {
+				if node := findNode(prevTree, focusedID); node != nil && node.Props.OnKey != nil {
+					node.Props.OnKey(ev)
+					routed = true
+				}
+			}
+
+			// Fall through to app-level handler for unrouted or unfocused events.
+			if !routed && app.OnKey != nil && app.OnKey(ev) {
 				return nil
 			}
+			if routed && app.OnKey != nil {
+				// Also give app a chance to handle quit (ctrl+c) even when focused.
+				if app.OnKey(ev) {
+					return nil
+				}
+			}
+
 			frame()
 
 		case <-update:

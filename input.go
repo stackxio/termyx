@@ -35,6 +35,7 @@ const (
 	KeyF10
 	KeyF11
 	KeyF12
+	KeyShiftTab // Shift+Tab — reverse focus cycle
 )
 
 // KeyEvent represents a single keyboard input event.
@@ -73,6 +74,8 @@ func parseKey(b []byte) KeyEvent {
 			return KeyEvent{Key: KeyHome, Raw: b}
 		case b[2] == 'F':
 			return KeyEvent{Key: KeyEnd, Raw: b}
+		case b[2] == 'Z':
+			return KeyEvent{Key: KeyShiftTab, Raw: b}
 		case len(b) >= 4 && b[2] == '5' && b[3] == '~':
 			return KeyEvent{Key: KeyPageUp, Raw: b}
 		case len(b) >= 4 && b[2] == '6' && b[3] == '~':
