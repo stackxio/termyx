@@ -92,6 +92,7 @@ type Props struct {
 	Style     Style
 	Focusable bool
 	OnKey     func(KeyEvent)
+	OnMouse   func(MouseEvent)
 }
 
 // LayoutResult holds the computed position and size of a node after layout.

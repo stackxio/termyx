@@ -45,9 +45,42 @@ type KeyEvent struct {
 	Raw  []byte
 }
 
+// InputEvent wraps either a keyboard or mouse event from stdin.
+type InputEvent struct {
+	Key   *KeyEvent
+	Mouse *MouseEvent
+}
+
+// ReadInput reads one keyboard or mouse event from stdin (blocking).
+func ReadInput() (InputEvent, error) {
+	buf := make([]byte, 32)
+	n, err := os.Stdin.Read(buf)
+	if err != nil {
+		return InputEvent{}, err
+	}
+	raw := buf[:n]
+
+	// SGR mouse: ESC [ < ...
+	if len(raw) >= 4 && raw[0] == 0x1b && raw[1] == '[' && raw[2] == '<' {
+		if ev, ok := parseSGRMouse(raw); ok {
+			return InputEvent{Mouse: &ev}, nil
+		}
+	}
+	// X10 mouse: ESC [ M <3 bytes>
+	if len(raw) >= 6 && raw[0] == 0x1b && raw[1] == '[' && raw[2] == 'M' {
+		if ev, ok := parseX10Mouse(raw); ok {
+			return InputEvent{Mouse: &ev}, nil
+		}
+	}
+
+	kev := parseKey(raw)
+	return InputEvent{Key: &kev}, nil
+}
+
 // ReadKey reads one key event from stdin (blocking).
+// Deprecated: use ReadInput to also receive mouse events.
 func ReadKey() (KeyEvent, error) {
-	buf := make([]byte, 16)
+	buf := make([]byte, 32)
 	n, err := os.Stdin.Read(buf)
 	if err != nil {
 		return KeyEvent{}, err

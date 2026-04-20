@@ -19,6 +19,17 @@ type App struct {
 	// unhandled events (where the node's OnKey returns false) fall through here.
 	OnKey func(KeyEvent) bool
 
+	// OnMouse handles mouse events at the application level.
+	// Return true to exit the runtime (rare; usually return false).
+	// Mouse events are first dispatched to the deepest node under the cursor
+	// that has an OnMouse handler; unhandled events bubble here.
+	OnMouse func(MouseEvent) bool
+
+	// EnableMouse activates terminal mouse reporting (SGR protocol).
+	// When true, click, scroll, and motion events are delivered via OnMouse
+	// and per-node Clickable handlers. Defaults to false.
+	EnableMouse bool
+
 	// Update is an optional channel that signals a re-render.
 	// Useful for triggering redraws from background goroutines.
 	Update <-chan struct{}
@@ -50,18 +61,27 @@ func Run(app *App) error {
 
 	painter := NewPainter(os.Stdout)
 
+	if app.EnableMouse {
+		fmt.Fprint(os.Stdout, mouseTrackingOn())
+		defer fmt.Fprint(os.Stdout, mouseTrackingOff())
+	}
+
 	sigwinch := make(chan os.Signal, 1)
 	signal.Notify(sigwinch, syscall.SIGWINCH)
 	defer signal.Stop(sigwinch)
 
-	keyc := make(chan KeyEvent, 8)
+	type inputMsg struct {
+		key   *KeyEvent
+		mouse *MouseEvent
+	}
+	inputc := make(chan inputMsg, 8)
 	go func() {
 		for {
-			ev, err := ReadKey()
+			ev, err := ReadInput()
 			if err != nil {
 				return
 			}
-			keyc <- ev
+			inputc <- inputMsg{key: ev.Key, mouse: ev.Mouse}
 		}
 	}()
 
@@ -130,7 +150,25 @@ func Run(app *App) error {
 			painter.Invalidate()
 			frame()
 
-		case ev := <-keyc:
+		case msg := <-inputc:
+			if msg.mouse != nil {
+				ev := *msg.mouse
+				// Dispatch to deepest node with an OnMouse handler.
+				handled := false
+				if prevTree != nil {
+					if hit := hitTest(prevTree, ev.X, ev.Y); hit != nil && hit.Props.OnMouse != nil {
+						hit.Props.OnMouse(ev)
+						handled = true
+					}
+				}
+				if !handled && app.OnMouse != nil && app.OnMouse(ev) {
+					return nil
+				}
+				frame()
+				continue
+			}
+
+			ev := *msg.key
 			// Tab / Shift+Tab cycle focus.
 			if ev.Key == KeyTab {
 				cycleFocus(true)
