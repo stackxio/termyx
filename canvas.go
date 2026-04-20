@@ -1,5 +1,7 @@
 package termyx
 
+import "github.com/mattn/go-runewidth"
+
 // Canvas is a clipped, offset view into a Buffer that lets custom render
 // functions work in local (0,0)-relative coordinates without manually adding
 // the node's X/Y offsets. Writes outside the canvas bounds are silently dropped.
@@ -33,23 +35,39 @@ func (c *Canvas) Set(x, y int, r rune, style Style) {
 	c.buf.Set(c.X+x, c.Y+y, r, style)
 }
 
-// WriteText writes a string starting at local (x, y), clipping at canvas edges.
+// SetWide writes a 2-column rune at local (x, y) and marks its continuation.
+func (c *Canvas) SetWide(x, y int, r rune, style Style) {
+	if x < 0 || x+1 >= c.Width || y < 0 || y >= c.Height {
+		return
+	}
+	c.buf.SetWide(c.X+x, c.Y+y, r, style)
+}
+
+// WriteText writes a string starting at local (x, y), advancing by the
+// display width of each rune. Clips at canvas edges.
 func (c *Canvas) WriteText(x, y int, text string, style Style) {
-	for i, r := range text {
-		if x+i >= c.Width {
+	col := x
+	for _, r := range text {
+		if col >= c.Width {
 			break
 		}
-		c.Set(x+i, y, r, style)
+		w := runewidth.RuneWidth(r)
+		if w == 2 {
+			if col+1 >= c.Width {
+				break
+			}
+			c.SetWide(col, y, r, style)
+			col += 2
+		} else {
+			c.Set(col, y, r, style)
+			col++
+		}
 	}
 }
 
-// WriteTextTrunc writes text truncated to maxW runes starting at local (x, y).
+// WriteTextTrunc writes text truncated to maxW display columns starting at local (x, y).
 func (c *Canvas) WriteTextTrunc(x, y, maxW int, text string, style Style) {
-	runes := []rune(text)
-	if len(runes) > maxW {
-		runes = runes[:maxW]
-	}
-	c.WriteText(x, y, string(runes), style)
+	c.WriteText(x, y, TruncateHard(text, maxW), style)
 }
 
 // Fill fills a rectangle at local coordinates with a rune and style.
@@ -64,7 +82,6 @@ func (c *Canvas) Fill(x, y, w, h int, r rune, style Style) {
 // Sub returns a Canvas scoped to a sub-region at local (x, y) with given size.
 // Coordinates within the sub-canvas are relative to its own origin.
 func (c *Canvas) Sub(x, y, w, h int) *Canvas {
-	// Clamp to parent bounds.
 	if x+w > c.Width {
 		w = c.Width - x
 	}
