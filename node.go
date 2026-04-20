@@ -1,4 +1,4 @@
-package ui
+package termyx
 
 // Direction defines the layout axis for a container node.
 type Direction int

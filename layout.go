@@ -1,4 +1,4 @@
-package ui
+package termyx
 
 // ComputeLayout runs a recursive layout pass, assigning X, Y, Width, Height
 // to every node in the tree given the available space.

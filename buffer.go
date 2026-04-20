@@ -1,4 +1,4 @@
-package ui
+package termyx
 
 // Cell represents a single character position in the terminal.
 type Cell struct {

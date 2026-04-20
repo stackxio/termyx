@@ -8,18 +8,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/voxire/termyx/ui"
+	termyx "github.com/stackxio/termyx"
 )
 
 // ── styles ───────────────────────────────────────────────────────────────────
 
 var (
-	styleHeader  = ui.Style{FG: ui.RGB(30, 215, 96), Bold: true}
-	styleValue   = ui.Style{FG: ui.RGB(255, 200, 50)}
-	styleDim     = ui.Style{FG: ui.RGB(100, 100, 110)}
-	styleBorder  = ui.Style{FG: ui.RGB(60, 80, 120)}
-	styleLog     = ui.Style{FG: ui.RGB(180, 180, 190)}
-	styleLogTime = ui.Style{FG: ui.RGB(80, 100, 140)}
+	styleHeader  = termyx.Style{FG: termyx.RGB(30, 215, 96), Bold: true}
+	styleValue   = termyx.Style{FG: termyx.RGB(255, 200, 50)}
+	styleDim     = termyx.Style{FG: termyx.RGB(100, 100, 110)}
+	styleBorder  = termyx.Style{FG: termyx.RGB(60, 80, 120)}
+	styleLog     = termyx.Style{FG: termyx.RGB(180, 180, 190)}
+	styleLogTime = termyx.Style{FG: termyx.RGB(80, 100, 140)}
 )
 
 // ── state ────────────────────────────────────────────────────────────────────
@@ -58,41 +58,35 @@ func (s *state) tick() {
 
 // ── UI tree ──────────────────────────────────────────────────────────────────
 
-func buildUI(s *state) *ui.Node {
+func buildUI(s *state) *termyx.Node {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return ui.Row(
-		// Left 60%: log stream
-		ui.Grow(
-			ui.Border(" LOGS ", styleBorder, logPane(s.logs)),
+	return termyx.Row(
+		termyx.Grow(
+			termyx.Border(" LOGS ", styleBorder, logPane(s.logs)),
 			1.5,
 		),
-		// Right 40%: metrics + input
-		ui.Column(
-			ui.Border(" METRICS ", styleBorder, metricsPane(s.cpu, s.mem, s.uptime)),
-			ui.Border(" INPUT ", styleBorder, inputPane(s.lastKey)),
+		termyx.Column(
+			termyx.Border(" METRICS ", styleBorder, metricsPane(s.cpu, s.mem, s.uptime)),
+			termyx.Border(" INPUT ", styleBorder, inputPane(s.lastKey)),
 		),
 	)
 }
 
-func logPane(logs []string) *ui.Node {
-	return ui.Custom(func(buf *ui.Buffer, l ui.LayoutResult) {
+func logPane(logs []string) *termyx.Node {
+	return termyx.Custom(func(buf *termyx.Buffer, l termyx.LayoutResult) {
 		if l.Width <= 0 || l.Height <= 0 {
 			return
 		}
-		// Show only the last l.Height lines
 		start := len(logs) - l.Height
 		if start < 0 {
 			start = 0
 		}
-		visible := logs[start:]
-
-		for i, line := range visible {
+		for i, line := range logs[start:] {
 			if i >= l.Height {
 				break
 			}
-			// Dim the timestamp prefix ([0042]) and normal style for the rest
 			if len(line) > 6 && line[0] == '[' {
 				buf.WriteText(l.X, l.Y+i, line[:6], styleLogTime)
 				rest := line[6:]
@@ -110,44 +104,37 @@ func logPane(logs []string) *ui.Node {
 	})
 }
 
-func metricsPane(cpu, mem float64, uptime int) *ui.Node {
+func metricsPane(cpu, mem float64, uptime int) *termyx.Node {
 	cpuBar := progressBar(cpu, 22)
 	memBar := progressBar(mem, 22)
-
-	lines := []struct {
-		label string
-		value string
-	}{
+	rows := []struct{ label, value string }{
 		{"CPU", fmt.Sprintf("%s  %.1f%%", cpuBar, cpu)},
 		{"MEM", fmt.Sprintf("%s  %.1f%%", memBar, mem)},
 		{"UP ", fmt.Sprintf("%ds  (%s)", uptime, formatDuration(uptime))},
 	}
-
-	return ui.Custom(func(buf *ui.Buffer, l ui.LayoutResult) {
+	return termyx.Custom(func(buf *termyx.Buffer, l termyx.LayoutResult) {
 		y := l.Y + 1
-		for _, ln := range lines {
+		for _, r := range rows {
 			if y >= l.Y+l.Height {
 				break
 			}
-			buf.WriteText(l.X+2, y, ln.label, styleHeader)
-			buf.WriteText(l.X+6, y, ln.value, styleValue)
+			buf.WriteText(l.X+2, y, r.label, styleHeader)
+			buf.WriteText(l.X+6, y, r.value, styleValue)
 			y += 2
 		}
 	})
 }
 
-func inputPane(lastKey string) *ui.Node {
-	return ui.Custom(func(buf *ui.Buffer, l ui.LayoutResult) {
+func inputPane(lastKey string) *termyx.Node {
+	return termyx.Custom(func(buf *termyx.Buffer, l termyx.LayoutResult) {
 		if l.Height < 1 {
 			return
 		}
 		label := "  last key: "
 		buf.WriteText(l.X, l.Y+1, label, styleDim)
 		buf.WriteText(l.X+len(label), l.Y+1, lastKey, styleValue)
-
-		hint := "  q / ctrl+c to quit"
 		if l.Height > 3 {
-			buf.WriteText(l.X, l.Y+3, hint, styleDim)
+			buf.WriteText(l.X, l.Y+3, "  q / ctrl+c to quit", styleDim)
 		}
 	})
 }
@@ -163,9 +150,7 @@ func progressBar(pct float64, width int) string {
 }
 
 func formatDuration(secs int) string {
-	h := secs / 3600
-	m := (secs % 3600) / 60
-	s := secs % 60
+	h, m, s := secs/3600, (secs%3600)/60, secs%60
 	if h > 0 {
 		return fmt.Sprintf("%dh%02dm%02ds", h, m, s)
 	}
@@ -192,38 +177,38 @@ func notify(ch chan<- struct{}) {
 	}
 }
 
-func keyName(ev ui.KeyEvent) string {
+func keyName(ev termyx.KeyEvent) string {
 	if ev.Rune != 0 {
 		return string(ev.Rune)
 	}
 	switch ev.Key {
-	case ui.KeyUp:
+	case termyx.KeyUp:
 		return "↑"
-	case ui.KeyDown:
+	case termyx.KeyDown:
 		return "↓"
-	case ui.KeyLeft:
+	case termyx.KeyLeft:
 		return "←"
-	case ui.KeyRight:
+	case termyx.KeyRight:
 		return "→"
-	case ui.KeyEnter:
+	case termyx.KeyEnter:
 		return "Enter"
-	case ui.KeyBackspace:
+	case termyx.KeyBackspace:
 		return "Backspace"
-	case ui.KeyDelete:
+	case termyx.KeyDelete:
 		return "Delete"
-	case ui.KeyEscape:
+	case termyx.KeyEscape:
 		return "Esc"
-	case ui.KeyTab:
+	case termyx.KeyTab:
 		return "Tab"
-	case ui.KeyCtrlL:
+	case termyx.KeyCtrlL:
 		return "Ctrl+L"
-	case ui.KeyHome:
+	case termyx.KeyHome:
 		return "Home"
-	case ui.KeyEnd:
+	case termyx.KeyEnd:
 		return "End"
-	case ui.KeyPageUp:
+	case termyx.KeyPageUp:
 		return "PgUp"
-	case ui.KeyPageDown:
+	case termyx.KeyPageDown:
 		return "PgDn"
 	default:
 		return ""
@@ -245,12 +230,12 @@ func main() {
 		}
 	}()
 
-	app := &ui.App{
-		Root: func() *ui.Node {
+	app := &termyx.App{
+		Root: func() *termyx.Node {
 			return buildUI(s)
 		},
-		OnKey: func(ev ui.KeyEvent) bool {
-			if ev.Key == ui.KeyCtrlC || ev.Key == ui.KeyCtrlD || ev.Rune == 'q' {
+		OnKey: func(ev termyx.KeyEvent) bool {
+			if ev.Key == termyx.KeyCtrlC || ev.Key == termyx.KeyCtrlD || ev.Rune == 'q' {
 				return true
 			}
 			s.mu.Lock()
@@ -261,7 +246,7 @@ func main() {
 		Update: update,
 	}
 
-	if err := ui.Run(app); err != nil {
+	if err := termyx.Run(app); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
